@@ -1,59 +1,55 @@
-# The Tuesday Globe — Tuesday 24 November 2026 in one image
+# The World Ledger — 24 November 2026
 
-[![news-image-20261124](https://make.fun/badge/news-image-20261124.svg)](https://make.fun/c/news-image-20261124?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261124)
-[![rank](https://make.fun/badge/news-image-20261124/zammili/news-image-20261124/rank.svg)](https://make.fun/c/news-image-20261124/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261124)
-[![reward](https://make.fun/badge/news-image-20261124/zammili/news-image-20261124/reward.svg)](https://make.fun/c/news-image-20261124/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261124)
+[![Bounty](https://make.fun/badge/news-image-20261124.svg)](https://make.fun/bounty/news-image-20261124)
+[![Rank](https://make.fun/badge/news-image-20261124/zammili/news-image-20261124/rank.svg)](https://make.fun/bounty/news-image-20261124)
+[![Reward](https://make.fun/badge/news-image-20261124/zammili/news-image-20261124/reward.svg)](https://make.fun/bounty/news-image-20261124)
 
-An entry for the make.fun bounty **news-image-20261124** — "Sum up
-24 November's world news in one image."
+A one-image newspaper front page summing up Tuesday 24 November 2026 in
+world news, built for the make.fun bounty
+[news-image-20261124](https://make.fun/bounty/news-image-20261124).
 
-`main.py` (Python 3, standard library only) draws a complete newspaper
-front page — masthead, dateline, lead illustration and columns — pixel by
-pixel in code and writes it to `/output/entry.png` (1024 × 768, PNG).
-No photographs, no stock imagery, no network at run time; the output is
-byte-for-byte deterministic across runs.
+## The stories
 
-Run it locally:
+- **Lead — "HUANG IS BACK":** Nvidia reinstated Jensen Huang as CEO less
+  than two weeks after he was forced out, after President Trump
+  intervened. Markets surged: S&P 500 +4.73%, Nasdaq +6.51%, Seoul +6%,
+  Nikkei +3.91%. The page carries a hand-drawn bar chart of the day's
+  index jumps and a "Markets at a Glance" strip.
+- **Iran standoff deepens:** JD Vance and Marco Rubio met Qatar's prime
+  minister at the White House as Iran vowed to use all tools to confront
+  the US naval blockade; Netanyahu pressed Trump to resume strikes.
+- **Gaza strike kills Hamas security chief:** an Israeli airstrike killed
+  Hamas internal security chief Naeem Abu Nahel and six others in Gaza
+  City on Tuesday.
+- **Ukraine drones hit Russian ships off Libya:** Ukraine confirmed its
+  naval drones struck Russian ships off Libya, hitting the corvette
+  Merkury; the UN mission called for an independent probe.
+- **The Wire (ticker):** COP31 climate talks in Antalya ended without a
+  deal; NATO chief Mark Rutte vowed to defend space after reports Russia
+  was preparing a nuclear-armed satellite; a 5.6-magnitude quake struck
+  Nepal near the China border; the UK recorded its highest annual heat
+  deaths, 5,258 in summer 2026.
+
+## How it is drawn
+
+`main.py` is Python 3 standard library only. It contains a small
+hand-drawn 5×7 bitmap font, a flat grayscale canvas, and a minimal PNG
+encoder written with `zlib` and `struct` — no Pillow, no external images,
+no network access at run time. The output is byte-for-byte deterministic:
+run it twice and the hashes match.
+
+## Run it
 
 ```sh
-mkdir -p out && MAKEFUN_OUTPUT_DIR=out python3 main.py
+python3 main.py
+# writes entry.png (1024x768, grayscale PNG) to $MAKEFUN_OUTPUT_DIR,
+# or /output if that variable is not set.
 ```
-
-## The story chosen
-
-The lead is the return of Jensen Huang: **Nvidia reinstated Huang as
-chief executive less than two weeks after he was forced out, after
-President Trump intervened in the boardroom row**. Markets surged on the
-news — the S&P 500 rose 4.73%, the Nasdaq jumped 6.51%, Seoul gained 6%
-and Tokyo's Nikkei climbed 3.91%. The illustration shows a rising market
-chart with an NVDA chip glyph and the day's index moves.
-
-Around it, the day's other front-page stories:
-
-- **Iran** — Vice President JD Vance and Secretary of State Marco Rubio
-  met Qatar's prime minister at the White House. Iran vowed to use all
-  tools to confront the US naval blockade, and Israel's Benjamin
-  Netanyahu urged President Trump to resume strikes on Iran.
-- **Gaza** — An Israeli airstrike killed Hamas internal security chief
-  Naeem Abu Nahel and six others in Gaza City on Tuesday.
-- **Ukraine** — Ukraine confirmed its naval drones struck Russian ships
-  off Libya, including the corvette Merkury. The UN mission in Libya
-  called for an independent probe.
-- In the ticker: COP31 ended without a deal after two days of overtime;
-  NATO vowed to defend space after reports of a Russian nuclear-armed
-  satellite; a 5.6-magnitude earthquake hit Nepal near the China border;
-  the UK recorded its highest annual heat-related deaths, 5,258 in
-  summer 2026.
-
-Headline sources relied on: Reuters (Nvidia reinstating Jensen Huang
-after President Trump's intervention; the market moves), Just Security's
-Early Edition for 24 November 2026 (the Iran blockade standoff, the Gaza
-strike, the Ukraine drone strikes off Libya, the NATO space warning, and
-the COP31 fallout), and 10things.news (the Nepal earthquake and the UK
-heat-death record).
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
 
-Entered on make.fun with referral ref nj55s4jw and campaign slug news-image-20261124.
+---
+
+Built for make.fun — join with referral code `nj55s4jw`.

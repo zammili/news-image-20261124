@@ -1,331 +1,393 @@
 #!/usr/bin/env python3
-"""The Tuesday Globe -- Tuesday 24 November 2026 in one image.
+"""THE WORLD LEDGER - front page for Tuesday 24 November 2026.
 
-Draws a newspaper front page, pixel by pixel, with the Python 3
-standard library only. No network, no photographs, no stock imagery.
-Deterministic: running it twice writes byte-identical PNG bytes.
-
-Run:  mkdir -p out && MAKEFUN_OUTPUT_DIR=out python3 main.py
+Draws a one-image newspaper front page summarising the day's world news.
+Python 3 standard library only. The PNG encoder and the bitmap font below
+are written by hand for this entry: no Pillow, no external images, no
+network access at run time. Output is deterministic - run it twice and the
+bytes are identical.
 """
 
 import os
 import struct
 import zlib
 
-W, H = 1024, 768
-OUT = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
-PATH = os.path.join(OUT, "entry.png")
+WIDTH = 1024
+HEIGHT = 768
 
-PAPER = (250, 246, 235)
-INK = (22, 22, 22)
-RED = (178, 34, 34)
-BLUE = (28, 68, 128)
-GREY = (110, 108, 100)
-GREEN = (46, 190, 110)
-DARKGREEN = (18, 54, 46)
-GRID = (36, 84, 68)
-GOLD = (200, 170, 60)
+WHITE = 255
+LIGHT = 225
+MID = 160
+DARK = 80
+BLACK = 0
 
-# ---------------------------------------------------------------- canvas
-buf = bytearray(W * H * 3)
-for i in range(W * H):
-    buf[i * 3:i * 3 + 3] = bytes(PAPER)
+# ---------------------------------------------------------------------------
+# Canvas: a flat grayscale buffer, one byte per pixel.
+# ---------------------------------------------------------------------------
 
 
-def set_px(x, y, c):
-    if 0 <= x < W and 0 <= y < H:
-        i = (y * W + x) * 3
-        buf[i:i + 3] = bytes(c)
+class Canvas:
+    def __init__(self, width, height, fill=WHITE):
+        self.width = width
+        self.height = height
+        self.pixels = bytearray([fill]) * (width * height)
+
+    def set(self, x, y, value):
+        if 0 <= x < self.width and 0 <= y < self.height:
+            self.pixels[y * self.width + x] = value
+
+    def fill_rect(self, x, y, w, h, value):
+        x0 = max(0, x)
+        y0 = max(0, y)
+        x1 = min(self.width, x + w)
+        y1 = min(self.height, y + h)
+        for yy in range(y0, y1):
+            row = yy * self.width
+            for xx in range(x0, x1):
+                self.pixels[row + xx] = value
+
+    def hline(self, x, y, w, value=BLACK, thick=1):
+        self.fill_rect(x, y, w, thick, value)
+
+    def vline(self, x, y, h, value=BLACK, thick=1):
+        self.fill_rect(x, y, thick, h, value)
+
+    def rect(self, x, y, w, h, value=BLACK, thick=1):
+        self.hline(x, y, w, value, thick)
+        self.hline(x, y + h - thick, w, value, thick)
+        self.vline(x, y, h, value, thick)
+        self.vline(x + w - thick, y, h, value, thick)
+
+    def line(self, x0, y0, x1, y1, value=BLACK):
+        """Bresenham line, for the chart's rising trend."""
+        dx = abs(x1 - x0)
+        dy = -abs(y1 - y0)
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        err = dx + dy
+        x, y = x0, y0
+        while True:
+            self.set(x, y, value)
+            self.set(x + 1, y, value)
+            if x == x1 and y == y1:
+                break
+            e2 = 2 * err
+            if e2 >= dy:
+                err += dy
+                x += sx
+            if e2 <= dx:
+                err += dx
+                y += sy
 
 
-def rect(x, y, w, h, c):
-    for yy in range(y, y + h):
-        for xx in range(x, x + w):
-            set_px(xx, yy, c)
+# ---------------------------------------------------------------------------
+# Bitmap font: hand-drawn 5x7 glyphs. '#' is ink, '.' is blank.
+# ---------------------------------------------------------------------------
 
-
-def hline(x, y, w, c):
-    rect(x, y, w, 1, c)
-
-
-def vline(x, y, h, c):
-    rect(x, y, 1, h, c)
-
-
-def line(x0, y0, x1, y1, c):
-    dx, dy = abs(x1 - x0), abs(y1 - y0)
-    sx = 1 if x0 < x1 else -1
-    sy = 1 if y0 < y1 else -1
-    err = dx - dy
-    while True:
-        set_px(x0, y0, c)
-        if x0 == x1 and y0 == y1:
-            return
-        e2 = 2 * err
-        if e2 > -dy:
-            err -= dy
-            x0 += sx
-        if e2 < dx:
-            err += dx
-            y0 += sy
-
-
-def thick_line(x0, y0, x1, y1, c, t=3):
-    for dx in range(-(t // 2), t // 2 + 1):
-        for dy in range(-(t // 2), t // 2 + 1):
-            line(x0 + dx, y0 + dy, x1 + dx, y1 + dy, c)
-
-
-def tri(x0, y0, x1, y1, x2, y2, c):
-    # filled triangle via horizontal scanlines
-    pts = sorted([(x0, y0), (x1, y1), (x2, y2)], key=lambda p: p[1])
-    (ax, ay), (bx, by), (cx, cy) = pts
-    for yy in range(ay, cy + 1):
-        if yy < by:
-            t1 = (yy - ay) / max(1, by - ay)
-            xa = ax + (bx - ax) * t1
-        else:
-            t1 = (yy - by) / max(1, cy - by)
-            xa = bx + (cx - bx) * t1
-        t2 = (yy - ay) / max(1, cy - ay)
-        xb = ax + (cx - ax) * t2
-        x_lo, x_hi = int(min(xa, xb)), int(max(xa, xb))
-        hline(x_lo, yy, x_hi - x_lo + 1, c)
-
-
-# ---------------------------------------------------------------- 5x7 font
-FONT = {
-    "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
-    "B": ("11110", "10001", "10001", "11110", "10001", "10001", "11110"),
-    "C": ("01110", "10001", "10000", "10000", "10000", "10001", "01110"),
-    "D": ("11110", "10001", "10001", "10001", "10001", "10001", "11110"),
-    "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
-    "F": ("11111", "10000", "10000", "11110", "10000", "10000", "10000"),
-    "G": ("01110", "10001", "10000", "10111", "10001", "10001", "01111"),
-    "H": ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
-    "I": ("01110", "00100", "00100", "00100", "00100", "00100", "01110"),
-    "J": ("00111", "00010", "00010", "00010", "00010", "10010", "01100"),
-    "K": ("10001", "10010", "10100", "11000", "10100", "10010", "10001"),
-    "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
-    "M": ("10001", "11011", "10101", "10101", "10001", "10001", "10001"),
-    "N": ("10001", "11001", "10101", "10011", "10001", "10001", "10001"),
-    "O": ("01110", "10001", "10001", "10001", "10001", "10001", "01110"),
-    "P": ("11110", "10001", "10001", "11110", "10000", "10000", "10000"),
-    "Q": ("01110", "10001", "10001", "10001", "10101", "10010", "01101"),
-    "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
-    "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
-    "T": ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
-    "U": ("10001", "10001", "10001", "10001", "10001", "10001", "01110"),
-    "V": ("10001", "10001", "10001", "10001", "10001", "01010", "00100"),
-    "W": ("10001", "10001", "10001", "10101", "10101", "10101", "01010"),
-    "X": ("10001", "10001", "01010", "00100", "01010", "10001", "10001"),
-    "Y": ("10001", "10001", "01010", "00100", "00100", "00100", "00100"),
-    "Z": ("11111", "00001", "00010", "00100", "01000", "10000", "11111"),
-    "0": ("01110", "10001", "10011", "10101", "11001", "10001", "01110"),
-    "1": ("00100", "01100", "00100", "00100", "00100", "00100", "01110"),
-    "2": ("01110", "10001", "00001", "00110", "01000", "10000", "11111"),
-    "3": ("11111", "00010", "00100", "00010", "00001", "10001", "01110"),
-    "4": ("00010", "00110", "01010", "10010", "11111", "00010", "00010"),
-    "5": ("11111", "10000", "11110", "00001", "00001", "10001", "01110"),
-    "6": ("00110", "01000", "10000", "11110", "10001", "10001", "01110"),
-    "7": ("11111", "00001", "00010", "00100", "01000", "01000", "01000"),
-    "8": ("01110", "10001", "10001", "01110", "10001", "10001", "01110"),
-    "9": ("01110", "10001", "10001", "01111", "00001", "00010", "01100"),
-    ".": ("00000", "00000", "00000", "00000", "00000", "01100", "01100"),
-    ",": ("00000", "00000", "00000", "00000", "01100", "00100", "01000"),
-    ":": ("00000", "01100", "01100", "00000", "01100", "01100", "00000"),
-    ";": ("00000", "01100", "01100", "00000", "01100", "00100", "01000"),
-    "!": ("00100", "00100", "00100", "00100", "00100", "00000", "00100"),
-    "?": ("01110", "10001", "00001", "00110", "00100", "00000", "00100"),
-    "-": ("00000", "00000", "00000", "01110", "00000", "00000", "00000"),
-    "(": ("00010", "00100", "01000", "01000", "01000", "00100", "00010"),
-    ")": ("01000", "00100", "00010", "00010", "00010", "00100", "01000"),
-    "/": ("00001", "00010", "00010", "00100", "01000", "01000", "10000"),
-    "%": ("11001", "11010", "00010", "00100", "01000", "01011", "10011"),
-    "&": ("01100", "10010", "10100", "01000", "10101", "10010", "01101"),
-    "+": ("00000", "00100", "00100", "11111", "00100", "00100", "00000"),
-    "=": ("00000", "00000", "11111", "00000", "11111", "00000", "00000"),
-    '"': ("01010", "01010", "01010", "00000", "00000", "00000", "00000"),
-    "'": ("00100", "00100", "01000", "00000", "00000", "00000", "00000"),
-    "*": ("00000", "10101", "01110", "11111", "01110", "10101", "00000"),
-    "#": ("01010", "01010", "11111", "01010", "11111", "01010", "01010"),
-    "$": ("00100", "01111", "10100", "01110", "00101", "11110", "00100"),
-    "_": ("00000", "00000", "00000", "00000", "00000", "00000", "11111"),
-    "[": ("01110", "01000", "01000", "01000", "01000", "01000", "01110"),
-    "]": ("01110", "00010", "00010", "00010", "00010", "00010", "01110"),
-    "<": ("00010", "00100", "01000", "10000", "01000", "00100", "00010"),
-    ">": ("01000", "00100", "00010", "00001", "00010", "00100", "01000"),
-    " ": ("00000", "00000", "00000", "00000", "00000", "00000", "00000"),
+GLYPHS = {
+    "A": (".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    "B": ("####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."),
+    "C": (".####", "#....", "#....", "#....", "#....", "#....", ".####"),
+    "D": ("####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####."),
+    "E": ("#####", "#....", "#....", "####.", "#....", "#....", "#####"),
+    "F": ("#####", "#....", "#....", "####.", "#....", "#....", "#...."),
+    "G": (".####", "#....", "#....", "#.###", "#...#", "#...#", ".###."),
+    "H": ("#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    "I": ("#####", "..#..", "..#..", "..#..", "..#..", "..#..", "#####"),
+    "J": ("..###", "...#.", "...#.", "...#.", "...#.", "#..#.", ".##.."),
+    "K": ("#...#", "#..#.", "#.#..", "##...", "#.#..", "#..#.", "#...#"),
+    "L": ("#....", "#....", "#....", "#....", "#....", "#....", "#####"),
+    "M": ("#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"),
+    "N": ("#...#", "##..#", "##..#", "#.#.#", "#..##", "#..##", "#...#"),
+    "O": (".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+    "P": ("####.", "#...#", "#...#", "####.", "#....", "#....", "#...."),
+    "Q": (".###.", "#...#", "#...#", "#...#", "#.#.#", "#..#.", ".##.#"),
+    "R": ("####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"),
+    "S": (".####", "#....", "#....", ".###.", "....#", "....#", "####."),
+    "T": ("#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."),
+    "U": ("#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+    "V": ("#...#", "#...#", "#...#", "#...#", "#...#", ".#.#.", "..#.."),
+    "W": ("#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#"),
+    "X": ("#...#", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "#...#"),
+    "Y": ("#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."),
+    "Z": ("#####", "....#", "...#.", "..#..", ".#...", "#....", "#####"),
+    "0": (".###.", "#..##", "#.#.#", "##..#", "#...#", "#...#", ".###."),
+    "1": ("..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."),
+    "2": (".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"),
+    "3": ("####.", "....#", "....#", ".###.", "....#", "....#", "####."),
+    "4": ("...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."),
+    "5": ("#####", "#....", "####.", "....#", "....#", "#...#", ".###."),
+    "6": (".###.", "#....", "#....", "####.", "#...#", "#...#", ".###."),
+    "7": ("#####", "....#", "...#.", "...#.", "..#..", "..#..", "..#.."),
+    "8": (".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."),
+    "9": (".###.", "#...#", "#...#", ".####", "....#", "....#", ".###."),
+    " ": (".....", ".....", ".....", ".....", ".....", ".....", "....."),
+    ".": (".....", ".....", ".....", ".....", ".....", ".##..", ".##.."),
+    ",": (".....", ".....", ".....", ".....", ".##..", ".##..", ".#..."),
+    "'": ("..#..", "..#..", "..#..", ".....", ".....", ".....", "....."),
+    '"': (".#.#.", ".#.#.", ".#.#.", ".....", ".....", ".....", "....."),
+    ":": (".....", ".##..", ".##..", ".....", ".##..", ".##..", "....."),
+    ";": (".....", ".##..", ".##..", ".....", ".##..", ".##..", ".#..."),
+    "!": ("..#..", "..#..", "..#..", "..#..", "..#..", ".....", "..#.."),
+    "?": (".###.", "#...#", "....#", "...#.", "..#..", ".....", "..#.."),
+    "%": ("##..#", "##.#.", "...#.", "..#..", ".#...", "#.##.", "#..##"),
+    "+": (".....", "..#..", "..#..", "#####", "..#..", "..#..", "....."),
+    "-": (".....", ".....", ".....", "#####", ".....", ".....", "....."),
+    "/": ("....#", "....#", "...#.", "..#..", ".#...", "#....", "#...."),
+    "(": ("...#.", "..#..", ".#...", ".#...", ".#...", "..#..", "...#."),
+    ")": (".#...", "..#..", "...#.", "...#.", "...#.", "..#..", ".#..."),
+    "&": (".##..", "#..#.", "#.#..", ".#...", "#.#.#", "#..#.", ".##.#"),
+    "$": ("..#..", ".####", "#.#..", ".###.", "..#.#", "####.", "..#.."),
+    "=": (".....", ".....", "#####", ".....", "#####", ".....", "....."),
+    "|": ("..#..", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."),
+    "*": (".....", ".#.#.", "..#..", "#####", "..#..", ".#.#.", "....."),
 }
-CHAR_W = 6  # 5 px glyph + 1 px gap
+
+CHAR_W = 6  # 5 glyph columns + 1 blank column
+CHAR_H = 7
 
 
-def text_w(s, scale):
-    return len(s) * CHAR_W * scale - scale
+def text_width(text, scale):
+    return len(text) * CHAR_W * scale
 
 
-def draw_text(x, y, s, scale, c):
-    s = s.upper()
-    for ci, ch in enumerate(s):
-        g = FONT.get(ch, FONT["?"])
-        ox = x + ci * CHAR_W * scale
-        for r in range(7):
-            for cc in range(5):
-                if g[r][cc] == "1":
-                    rect(ox + cc * scale, y + r * scale, scale, scale, c)
-    return x + text_w(s, scale)
+def draw_glyph(canvas, x, y, glyph, scale, value=BLACK):
+    for row, bits in enumerate(glyph):
+        for col, ch in enumerate(bits):
+            if ch == "#":
+                canvas.fill_rect(
+                    x + col * scale, y + row * scale, scale, scale, value
+                )
 
 
-def draw_centered(y, s, scale, c):
-    draw_text((W - text_w(s, scale)) // 2, y, s, scale, c)
+def draw_text(canvas, x, y, text, scale, value=BLACK):
+    cx = x
+    for ch in text:
+        glyph = GLYPHS.get(ch.upper(), GLYPHS["?"])
+        draw_glyph(canvas, cx, y, glyph, scale, value)
+        cx += CHAR_W * scale
+    return cx - x
 
 
-def wrap(s, width_px, scale):
-    words = s.split(" ")
-    lines, cur = [], ""
-    for w_ in words:
-        t = (cur + " " + w_).strip()
-        if text_w(t, scale) <= width_px:
-            cur = t
-        else:
-            if cur:
-                lines.append(cur)
-            cur = w_
-    if cur:
-        lines.append(cur)
+def draw_text_centered(canvas, cx, y, text, scale, value=BLACK):
+    w = text_width(text, scale)
+    draw_text(canvas, cx - w // 2, y, text, scale, value)
+    return w
+
+
+def wrap_text(text, max_width, scale):
+    """Greedy word wrap; returns a list of lines that fit max_width px."""
+    unit = CHAR_W * scale
+    max_chars = max(1, max_width // unit)
+    lines = []
+    for paragraph in text.split("\n"):
+        words = paragraph.split(" ")
+        current = ""
+        for word in words:
+            trial = word if not current else current + " " + word
+            if len(trial) <= max_chars:
+                current = trial
+            else:
+                if current:
+                    lines.append(current)
+                # A single over-long word is hard-split.
+                while len(word) > max_chars:
+                    lines.append(word[:max_chars])
+                    word = word[max_chars:]
+                current = word
+        if current:
+            lines.append(current)
     return lines
 
 
-def para(x, y, s, width_px, scale, c, lh=None):
-    lh = lh or (9 * scale)
-    for ln in wrap(s, width_px, scale):
-        draw_text(x, y, ln, scale, c)
-        y += lh
-    return y
+def draw_paragraph(canvas, x, y, text, max_width, scale, line_gap=4, value=BLACK):
+    lines = wrap_text(text, max_width, scale)
+    line_height = CHAR_H * scale + line_gap
+    for i, line in enumerate(lines):
+        draw_text(canvas, x, y + i * line_height, line, scale, value)
+    return len(lines)
 
 
-# ---------------------------------------------------------------- masthead
-hline(24, 14, W - 48, INK)
-hline(24, 17, W - 48, INK)
-draw_centered(28, "THE TUESDAY GLOBE", 6, INK)
-hline(24, 78, W - 48, INK)
-draw_text(24, 86, "NO. 328", 2, GREY)
-draw_centered(86, "TUESDAY 24 NOVEMBER 2026", 2, RED)
-draw_text(W - 24 - text_w("PRICE: ONE DAY'S NEWS", 2), 86,
-          "PRICE: ONE DAY'S NEWS", 2, GREY)
-hline(24, 104, W - 48, INK)
-rect(24, 107, W - 48, 3, INK)
-
-# ---------------------------------------------------------------- headline
-draw_centered(122, "HUANG IS BACK", 6, INK)
-draw_centered(172, "NVIDIA REINSTATES ITS CEO", 4, INK)
-draw_centered(210, "AFTER PRESIDENT TRUMP INTERVENED, THE CHIPMAKER REVERSED THE SACKING -", 2, INK)
-draw_centered(228, "MARKETS SURGED: S AND P 500 +4.73%, NASDAQ +6.51%, SEOUL +6%, NIKKEI +3.91%", 2, INK)
-
-# ------------------------------------------------------- illustration panel
-IX, IY, IW, IH = 24, 246, 976, 190
-rect(IX, IY, IW, IH, DARKGREEN)
-# horizontal grid lines
-for gy in range(IY + 28, IY + IH - 34, 28):
-    hline(IX, gy, IW, GRID)
-# rising bars, two red dips on the way up
-BAR_BASE = IY + 156
-BAR_H = [36, 48, 42, 62, 55, 75, 68, 88, 80, 102, 95, 115, 108, 128, 120, 140]
-BAR_RED = {2, 8}
-for bi, bh in enumerate(BAR_H):
-    bx = IX + 52 + bi * 56
-    bc = (214, 84, 70) if bi in BAR_RED else GREEN
-    rect(bx, BAR_BASE - bh, 40, bh, bc)
-    rect(bx, BAR_BASE - bh, 40, 4, (220, 235, 220))
-# small NVDA chip glyph, top left
-CX, CY2 = IX + 16, IY + 12
-rect(CX, CY2, 44, 44, GOLD)
-rect(CX + 6, CY2 + 6, 32, 32, (30, 30, 30))
-for px in range(CX + 8, CX + 40, 8):
-    vline(px, CY2 - 6, 6, GOLD)
-    vline(px, CY2 + 44, 6, GOLD)
-for py in range(CY2 + 8, CY2 + 40, 8):
-    hline(CX - 6, py, 6, GOLD)
-    hline(CX + 44, py, 6, GOLD)
-draw_text(CX + 10, CY2 + 18, "NVDA", 1, (240, 240, 240))
-# thick white arrow climbing from the panel origin to the top right,
-# now starting at the bottom-left corner so it reads as one trend line
-thick_line(IX + 36, BAR_BASE + 4, IX + IW - 60, IY + 18, (250, 246, 235), 5)
-tri(IX + IW - 60, IY + 18, IX + IW - 96, IY + 8, IX + IW - 92, IY + 38,
-    (250, 246, 235))
-# light strip at the bottom of the panel with the index moves
-rect(IX, IY + IH - 32, IW, 32, (238, 232, 218))
-draw_text(IX + 12, IY + IH - 24,
-          "S AND P 500 +4.73%    NASDAQ +6.51%    KOSPI +6%    NIKKEI +3.91%",
-          2, INK)
-# caption bar under the picture
-rect(IX, IY + IH - 2, IW, 2, INK)
-draw_text(IX + 4, IY + IH + 8, "THE MARKET REACTION: WALL STREET SURGED AS NVIDIA REVERSED THE SACKING OF JENSEN HUANG.", 1, GREY)
-
-# ---------------------------------------------------------------- columns
-CY = 462
-# left column: lead story
-LX, LW = 24, 520
-draw_text(LX, CY, "SANTA CLARA -", 2, RED)
-y = para(LX, CY + 22,
-          "Nvidia has reinstated Jensen Huang as chief executive less "
-          "than two weeks after he was forced out, after President Trump "
-          "intervened in the boardroom row.", LW, 2, INK)
-y = para(LX, y + 8,
-          "Markets surged on the news. The S and P 500 rose 4.73%, the "
-          "Nasdaq jumped 6.51%, Seoul gained 6% and Tokyo's Nikkei "
-          "climbed 3.91%.", LW, 2, INK)
-# markets at a glance
-hline(LX, y + 10, LW, GREY)
-draw_text(LX, y + 18, "MARKETS AT A GLANCE", 2, RED)
-draw_text(LX, y + 40, "S AND P 500 +4.73%    NASDAQ +6.51%", 1, INK)
-draw_text(LX, y + 54, "KOSPI +6%    NIKKEI +3.91%", 1, INK)
-
-# right column: three side stories
-RX, RW = 580, 420
-vline(560, CY, 232, GREY)
-ry = CY
-for kicker, head, body in [
-    ("IRAN", "BLOCKADE STANDOFF AT WHITE HOUSE",
-     "Vice President JD Vance and Secretary of State Marco Rubio met "
-     "Qatar's prime minister at the White House. Iran vowed to use all "
-     "tools to confront the blockade, and Netanyahu urged Trump to "
-     "resume strikes."),
-    ("GAZA", "STRIKE KILLS HAMAS SECURITY CHIEF",
-     "An Israeli airstrike killed Hamas internal security chief Naeem "
-     "Abu Nahel and six others in Gaza City on Tuesday, officials said."),
-    ("UKRAINE", "DRONES HIT RUSSIAN SHIPS OFF LIBYA",
-     "Ukraine confirmed its naval drones struck Russian ships off "
-     "Libya, including the corvette Merkury. The UN mission in Libya "
-     "called for an independent probe."),
-]:
-    draw_text(RX, ry, kicker, 2, RED)
-    ry = para(RX, ry + 20, head, RW, 2, INK)
-    ry = para(RX, ry + 4, body, RW, 1, INK, lh=10)
-    ry += 6
-
-# ---------------------------------------------------------------- ticker
-TY = 706
-rect(24, TY, W - 48, 44, INK)
-draw_text(36, TY + 7, "COP31 ENDS WITHOUT A DEAL AFTER TWO DAYS OF OVERTIME", 2, (250, 246, 235))
-draw_text(36, TY + 25, "NATO VOWS TO DEFEND SPACE AFTER REPORTS OF RUSSIAN NUCLEAR SATELLITE - 5.6 QUAKE HITS NEPAL - UK HEAT DEATHS HIT RECORD 5,258", 1, (200, 196, 182))
-hline(24, TY + 50, W - 48, INK)
-draw_centered(758, "THE TUESDAY GLOBE - TUESDAY 24 NOVEMBER 2026", 1, GREY)
-
-# ---------------------------------------------------------------- write PNG
-os.makedirs(OUT, exist_ok=True)
+# ---------------------------------------------------------------------------
+# Minimal PNG writer: grayscale, 8-bit, no filtering.
+# ---------------------------------------------------------------------------
 
 
-def chunk(kind, data):
-    c = struct.pack(">I", len(data)) + kind + data
-    return c + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+def _chunk(tag, data):
+    out = struct.pack(">I", len(data)) + tag + data
+    out += struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+    return out
 
 
-raw = b"".join(b"\x00" + bytes(buf[y * W * 3:(y + 1) * W * 3]) for y in range(H))
-png = (b"\x89PNG\r\n\x1a\n"
-       + chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0))
-       + chunk(b"IDAT", zlib.compress(raw, 9))
-       + chunk(b"IEND", b""))
-with open(PATH, "wb") as f:
-    f.write(png)
-print("wrote", PATH, len(png), "bytes")
+def write_png(canvas, path):
+    raw = bytearray()
+    for y in range(canvas.height):
+        raw.append(0)  # filter type 0 (none)
+        start = y * canvas.width
+        raw += canvas.pixels[start:start + canvas.width]
+    ihdr = struct.pack(">IIBBBBB", canvas.width, canvas.height, 8, 0, 0, 0, 0)
+    data = b"\x89PNG\r\n\x1a\n"
+    data += _chunk(b"IHDR", ihdr)
+    data += _chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+    data += _chunk(b"IEND", b"")
+    with open(path, "wb") as f:
+        f.write(data)
+
+
+# ---------------------------------------------------------------------------
+# The front page. Vertical budget (768 px tall):
+#   masthead 22-78, rules + date 88-128, lead headline 140-189,
+#   subhead 200-236, lead row 248-374, markets strip 386-438,
+#   rule 450, side stories 464-666, rule 678, ticker 690-748.
+# ---------------------------------------------------------------------------
+
+MARKETS = [
+    ("S&P 500", "+4.73%"),
+    ("NASDAQ", "+6.51%"),
+    ("KOSPI", "+6.00%"),
+    ("NIKKEI", "+3.91%"),
+]
+
+
+def draw_chart(canvas, x, y, w, h):
+    """Bar chart of the day's index jumps, drawn with plain rectangles."""
+    canvas.rect(x, y, w, h, BLACK, 2)
+    draw_text(canvas, x + 12, y + 8, "MARKETS SURGE ON THE NEWS", 1)
+    base = y + h - 34
+    top = y + 34
+    canvas.hline(x + 10, base, w - 20, BLACK, 2)
+    canvas.vline(x + 10, top, base - top, BLACK, 2)
+    values = [4.73, 6.51, 6.00, 3.91]
+    labels = ["S&P 500", "NASDAQ", "KOSPI", "NIKKEI"]
+    max_v = 7.0
+    slot = (w - 40) // 4
+    bar_w = 44
+    tops = []
+    for i, (value, label) in enumerate(zip(values, labels)):
+        bar_h = int((base - top - 8) * value / max_v)
+        bx = x + 24 + i * slot
+        by = base - bar_h
+        tops.append((bx + bar_w // 2, by))
+        canvas.fill_rect(bx, by, bar_w, bar_h, DARK)
+        canvas.rect(bx, by, bar_w, bar_h, BLACK, 1)
+        draw_text_centered(canvas, bx + bar_w // 2, by - 14,
+                           "+%.2f%%" % value, 1)
+        draw_text_centered(canvas, bx + bar_w // 2, base + 6, label, 1)
+    # Rising trend line across the bar tops.
+    for i in range(1, len(tops)):
+        canvas.line(tops[i - 1][0], tops[i - 1][1], tops[i][0], tops[i][1])
+    draw_text(canvas, x + 12, y + h - 14,
+              "ONE-DAY MOVE, TUESDAY 24 NOVEMBER 2026", 1, DARK)
+
+
+def draw_markets_strip(canvas, x, y, w, h):
+    canvas.rect(x, y, w, h, BLACK, 2)
+    title = "MARKETS AT A GLANCE"
+    draw_text(canvas, x + 12, y + h // 2 - 7, title, 2)
+    rest_x = x + 12 + text_width(title, 2) + 24
+    rest_w = x + w - 12 - rest_x
+    slot = rest_w // len(MARKETS)
+    for i, (name, change) in enumerate(MARKETS):
+        entry = "%s %s" % (name, change)
+        ex = rest_x + i * slot
+        draw_text(canvas, ex, y + h // 2 - 7, entry, 2)
+        if i:
+            canvas.vline(ex - 10, y + 10, h - 20, LIGHT, 1)
+
+
+def draw_story_row(canvas, x, y, w, kicker, headline, body):
+    """One full-width story row: kicker + headline, then wrapped body."""
+    draw_text(canvas, x, y, kicker + " -", 1, DARK)
+    draw_text(canvas, x + text_width(kicker + " - ", 1), y, headline, 2)
+    draw_paragraph(canvas, x, y + 20, body, w, 2, line_gap=2)
+
+
+def build():
+    c = Canvas(WIDTH, HEIGHT)
+    c.rect(6, 6, WIDTH - 12, HEIGHT - 12, BLACK, 3)
+
+    # --- Masthead -------------------------------------------------------
+    draw_text_centered(c, WIDTH // 2, 22, "THE WORLD LEDGER", 8)
+    c.hline(24, 88, WIDTH - 48, BLACK, 3)
+    draw_text(c, 26, 98, "NO. 328", 2)
+    draw_text_centered(c, WIDTH // 2, 96, "TUESDAY 24 NOVEMBER 2026", 3)
+    price = "PRICE: FREE"
+    draw_text(c, WIDTH - 26 - text_width(price, 2), 98, price, 2)
+    c.hline(24, 128, WIDTH - 48, BLACK, 2)
+
+    # --- Lead story -----------------------------------------------------
+    draw_text(c, 24, 140, "LEAD STORY", 1, DARK)
+    draw_text(c, 24, 152, "HUANG IS BACK", 7)
+    draw_paragraph(
+        c, 24, 212,
+        "NVIDIA REINSTATES ITS FOUNDER-CHIEF AFTER PRESIDENT TRUMP "
+        "INTERVENES IN THE BOARDROOM COUP.",
+        WIDTH - 48, 2, line_gap=3,
+    )
+
+    lead_body = (
+        "Nvidia reinstated Jensen Huang as chief executive less than two "
+        "weeks after he was forced out, after President Donald Trump "
+        "intervened. Markets surged on the news: the S&P 500 jumped "
+        "4.73%, the Nasdaq soared 6.51%, Seoul rose 6% and the Nikkei "
+        "climbed 3.91%."
+    )
+    draw_paragraph(c, 24, 248, lead_body, 520, 2, line_gap=4)
+
+    # Chart sits right of the lead body.
+    draw_chart(c, 580, 248, 420, 126)
+
+    # Markets strip under the lead row.
+    draw_markets_strip(c, 24, 386, WIDTH - 48, 52)
+
+    c.hline(24, 450, WIDTH - 48, BLACK, 2)
+
+    # --- Three side stories, full-width rows -----------------------------
+    draw_story_row(
+        c, 24, 464, WIDTH - 48, "MIDDLE EAST",
+        "IRAN STANDOFF DEEPENS",
+        "JD Vance and Secretary of State Marco Rubio met Qatar's prime "
+        "minister at the White House as Iran vowed to use all tools to "
+        "confront the US naval blockade. Netanyahu pressed President "
+        "Trump to resume strikes on Iran.",
+    )
+    draw_story_row(
+        c, 24, 532, WIDTH - 48, "GAZA",
+        "GAZA STRIKE KILLS HAMAS SECURITY CHIEF",
+        "An Israeli airstrike killed Hamas internal security chief Naeem "
+        "Abu Nahel and six others in Gaza City on Tuesday, officials "
+        "said, as the fragile ceasefire came under fresh strain.",
+    )
+    draw_story_row(
+        c, 24, 600, WIDTH - 48, "UKRAINE / LIBYA",
+        "UKRAINE DRONES HIT RUSSIAN SHIPS OFF LIBYA",
+        "Ukraine confirmed its naval drones struck Russian ships off "
+        "Libya, hitting the corvette Merkury. The UN mission in Libya "
+        "called for an independent investigation into the attack.",
+    )
+
+    # --- Ticker ----------------------------------------------------------
+    c.hline(24, 678, WIDTH - 48, BLACK, 2)
+    ticker = (
+        "COP31 CLIMATE TALKS IN ANTALYA END WITHOUT A DEAL | NATO CHIEF "
+        "MARK RUTTE VOWS TO DEFEND SPACE AFTER REPORTS RUSSIA WAS "
+        "PREPARING A NUCLEAR-ARMED SATELLITE | 5.6-MAGNITUDE QUAKE "
+        "STRIKES NEPAL NEAR THE CHINA BORDER | UK RECORDS HIGHEST ANNUAL "
+        "HEAT DEATHS: 5,258 IN SUMMER 2026"
+    )
+    draw_text(c, 24, 690, "THE WIRE", 1, DARK)
+    draw_paragraph(c, 24, 704, ticker, WIDTH - 48, 1, line_gap=3, value=DARK)
+    return c
+
+
+def main():
+    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, "entry.png")
+    canvas = build()
+    write_png(canvas, path)
+    print("wrote %s (%dx%d)" % (path, WIDTH, HEIGHT))
+
+
+if __name__ == "__main__":
+    main()
